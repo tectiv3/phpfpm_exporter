@@ -16,6 +16,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"io"
 	"log"
 	"net/http"
@@ -25,8 +26,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"path/filepath"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -44,59 +43,59 @@ var (
 	phpfpmUpDesc = prometheus.NewDesc(
 		prometheus.BuildFQName("php", "fpm", "up"),
 		"Whether scraping PHP-FPM's metrics was successful.",
-		[]string{phpfpmSocketPathLabel}, nil)
+		[]string{}, nil)
 
 	phpfpmAcceptedConnections = prometheus.NewDesc(
 		prometheus.BuildFQName("php", "fpm", "accepted_connections_total"),
 		"Number of request accepted by the pool.",
-		[]string{phpfpmSocketPathLabel}, nil)
+		[]string{}, nil)
 
 	phpfpmStartTime = prometheus.NewDesc(
 		prometheus.BuildFQName("php", "fpm", "start_time_seconds"),
 		"Unix time when FPM has started or reloaded.",
-		[]string{phpfpmSocketPathLabel}, nil)
+		[]string{}, nil)
 
 	phpfpmGauges = map[string]*prometheus.Desc{
 		"listen queue": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "listen_queue"),
 			"Number of request in the queue of pending connections.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 		"max listen queue": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "max_listen_queue"),
 			"Maximum number of requests in the queue of pending connections since FPM has started.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 		"listen queue len": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "listen_queue_length"),
 			"The size of the socket queue of pending connections.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 		"idle processes": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "idle_processes"),
 			"Number of idle processes.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 		"active processes": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "active_processes"),
 			"Number of active processes.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 		"total processes": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "total_processes"),
 			"Number of total processes.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 		"max active processes": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "max_active_processes"),
 			"Maximum number of active processes since FPM has started.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 		"max children reached": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "max_children_reached"),
 			"Number of times, the process limit has been reached.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 		"slow requests": prometheus.NewDesc(
 			prometheus.BuildFQName("php", "fpm", "slow_requests"),
 			"Enable php-fpm slow-log before you consider this. If this value is non-zero you may have slow php processes.",
-			[]string{phpfpmSocketPathLabel}, nil),
+			[]string{}, nil),
 	}
 )
 
-func CollectStatusFromReader(reader io.Reader, socketPath string, ch chan<- prometheus.Metric) error {
+func CollectStatusFromReader(reader io.Reader, ch chan<- prometheus.Metric) error {
 	scanner := bufio.NewScanner(reader)
 	re := regexp.MustCompile("^(.*): +(.*)$")
 
@@ -112,21 +111,13 @@ func CollectStatusFromReader(reader io.Reader, socketPath string, ch chan<- prom
 			if err != nil {
 				return err
 			}
-			ch <- prometheus.MustNewConstMetric(
-				gauge,
-				prometheus.GaugeValue,
-				f,
-				socketPath)
+			ch <- prometheus.MustNewConstMetric(gauge, prometheus.GaugeValue, f)
 		} else if fields[1] == "accepted conn" {
 			f, err := strconv.ParseFloat(fields[2], 64)
 			if err != nil {
 				return err
 			}
-			ch <- prometheus.MustNewConstMetric(
-				phpfpmAcceptedConnections,
-				prometheus.CounterValue,
-				f,
-				socketPath)
+			ch <- prometheus.MustNewConstMetric(phpfpmAcceptedConnections, prometheus.CounterValue, f)
 		} else if fields[1] == "start time" {
 			location, err := time.LoadLocation("Local")
 			if err != nil {
@@ -137,11 +128,7 @@ func CollectStatusFromReader(reader io.Reader, socketPath string, ch chan<- prom
 				return err
 			}
 			f := float64(since.Unix())
-			ch <- prometheus.MustNewConstMetric(
-				phpfpmStartTime,
-				prometheus.GaugeValue,
-				f,
-				socketPath)
+			ch <- prometheus.MustNewConstMetric(phpfpmStartTime, prometheus.GaugeValue, f)
 		}
 	}
 	return nil
@@ -165,7 +152,7 @@ func CollectStatusFromSocket(path *SocketPath, statusPath string, ch chan<- prom
 		return err
 	}
 
-	return CollectStatusFromReader(resp.Body, path.FormatStr(), ch)
+	return CollectStatusFromReader(resp.Body, ch)
 }
 
 func CollectMetricsFromScript(socketPaths []*SocketPath, scriptPaths []string) ([]*client_model.MetricFamily, error) {
@@ -240,22 +227,13 @@ func (e *PhpfpmExporter) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (e *PhpfpmExporter) Collect(ch chan<- prometheus.Metric) {
-
 	for _, socketPath := range e.socketPaths {
 		err := CollectStatusFromSocket(socketPath, e.statusPath, ch)
 		if err == nil {
-			ch <- prometheus.MustNewConstMetric(
-				phpfpmUpDesc,
-				prometheus.GaugeValue,
-				1.0,
-				socketPath.FormatStr())
+			ch <- prometheus.MustNewConstMetric(phpfpmUpDesc, prometheus.GaugeValue, 1.0)
 		} else {
 			log.Printf("Failed to scrape socket: %s", err)
-			ch <- prometheus.MustNewConstMetric(
-				phpfpmUpDesc,
-				prometheus.GaugeValue,
-				0.0,
-				socketPath.FormatStr())
+			ch <- prometheus.MustNewConstMetric(phpfpmUpDesc, prometheus.GaugeValue, 0.0)
 		}
 	}
 }
@@ -285,7 +263,6 @@ func main() {
 		listenAddress        = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9253").String()
 		metricsPath          = kingpin.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
 		socketPaths          = kingpin.Flag("phpfpm.socket-paths", "Paths of the PHP-FPM sockets.").Strings()
-		socketDirectories    = kingpin.Flag("phpfpm.socket-directories", "Path(s) of the directory where PHP-FPM sockets are located.").Strings()
 		statusPath           = kingpin.Flag("phpfpm.status-path", "Path which has been configured in PHP-FPM to show status page.").Default("/status").String()
 		scriptCollectorPaths = kingpin.Flag("phpfpm.script-collector-paths", "Paths of the PHP file whose output needs to be collected.").Strings()
 		showVersion          = kingpin.Flag("version", "Print version information.").Bool()
@@ -295,15 +272,6 @@ func main() {
 	kingpin.Parse()
 
 	var sockets []*SocketPath
-	for _, socketDirectory := range *socketDirectories {
-		_ = filepath.Walk(socketDirectory, func(path string, info os.FileInfo, err error) error {
-			if err == nil && info.Mode()&os.ModeSocket != 0 {
-				sockets = append(sockets, NewSocketPath(path))
-			}
-			return nil
-		})
-	}
-
 	for _, socket := range *socketPaths {
 		sockets = append(sockets, NewSocketPath(socket))
 	}
@@ -319,10 +287,12 @@ func main() {
 	}
 	prometheus.MustRegister(exporter)
 
+	//prometheus.Unregister(prometheus.NewProcessCollector(os.Getpid(), ""))
+	prometheus.Unregister(collectors.NewGoCollector())
+
 	gatherer := prometheus.DefaultGatherer
 	if len(*scriptCollectorPaths) != 0 {
 		gatherer = prometheus.Gatherers{
-			prometheus.DefaultGatherer,
 			prometheus.GathererFunc(func() ([]*client_model.MetricFamily, error) {
 				return CollectMetricsFromScript(sockets, *scriptCollectorPaths)
 			}),
